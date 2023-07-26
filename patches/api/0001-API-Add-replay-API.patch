@@ -1,0 +1,182 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fritz Windisch <friwidev@gmail.com>
+Date: Mon, 24 Jul 2023 21:35:32 +0200
+Subject: [PATCH] API: Add replay API
+
+
+diff --git a/src/main/java/me/friwi/replay/RecordingCreator.java b/src/main/java/me/friwi/replay/RecordingCreator.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..f5224c13ca23ac4ec0d3a002913f911bf4a8159d
+--- /dev/null
++++ b/src/main/java/me/friwi/replay/RecordingCreator.java
+@@ -0,0 +1,116 @@
++/*
++Paper ReplayMod Recording Creator
++Copyright (C) 2023 FriwiDev
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or
++(at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.friwi.replay;
++
++import java.awt.image.BufferedImage;
++import java.io.File;
++import java.util.Collection;
++import java.util.List;
++import java.util.UUID;
++import java.util.function.Consumer;
++import net.kyori.adventure.text.Component;
++import org.bukkit.Color;
++import org.bukkit.Location;
++import org.bukkit.World;
++
++public interface RecordingCreator {
++    /**
++     * Record begin and finalization
++     */
++    void beginRecording();
++
++    void endRecording(Consumer<File> onComplete);
++
++    BufferedImage getThumbnail();
++
++    /**
++     * Settings for the whole file
++     */
++    void setThumbnail(BufferedImage image);
++
++    String getCustomServerName();
++
++    void setCustomServerName(String customServerName);
++
++    String getServerIP();
++
++    void setServerIP(String serverIP);
++
++    void setTablistHeaderFooter(String header, String footer);
++
++    void setTablistHeaderFooter(Component header, Component footer);
++
++    void setPlayerListName(UUID uuid, String listName);
++
++    void createObjective(String objectiveName, String text);
++
++    void createObjective(String objectiveName, String text, boolean displayAsHeart);
++
++    void displayObjectiveList(String objectiveName);
++
++    void displayObjectiveSidebar(String objectiveName);
++
++    void displayObjectiveBelowName(String objectiveName);
++
++    void createTeam(String team, Color color, String displayName, String prefix, String suffix, Collection<String> players);
++
++    Collection<UUID> getOccuringPlayers();
++
++    World getWorld();
++
++    boolean addResourcePack(File file);
++
++    boolean removeResourcePack(File file);
++
++    List<File> getAllResourcePacks();
++
++    /**
++     * Time dependent settings
++     */
++    void appendPacket(Object packet);
++
++    void appendPacketWithLocation(Object packet, Location location);
++
++    void appendPacketWithLocation(Object packet, int x, int y, int z);
++
++    void appendPacketWithChunkLocation(Object packet, int cx, int cz);
++
++    void addChat(String message);
++
++    void addChat(Component component);
++
++    void addOrUpdateScore(String score, String objectiveName, int value);
++
++    void removeScore(String score);
++
++    void removeTeam(String team);
++
++    void updateTeamInfo(String team, Color color, String displayName, String prefix, String suffix);
++
++    void addPlayersToTeam(String team, Collection<String> players);
++
++    void removePlayersFromTeam(String team, Collection<String> players);
++
++    /**
++     * Utils
++     */
++    boolean isLocationRelevant(Location loc);
++
++    boolean isActive();
++}
+diff --git a/src/main/java/me/friwi/replay/RecordingFactory.java b/src/main/java/me/friwi/replay/RecordingFactory.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..44db5c95c0b19171ce3c50c0de3e665d7693830e
+--- /dev/null
++++ b/src/main/java/me/friwi/replay/RecordingFactory.java
+@@ -0,0 +1,27 @@
++/*
++Paper ReplayMod Recording Creator
++Copyright (C) 2023 FriwiDev
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or
++(at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.friwi.replay;
++
++import java.io.File;
++import java.io.IOException;
++import org.bukkit.Location;
++
++public interface RecordingFactory {
++    RecordingCreator newRecordingCreator(File dir, Location spawnLocation, int lcx, int hcx, int lcz, int hcz) throws IOException;
++}
+diff --git a/src/main/java/org/bukkit/Server.java b/src/main/java/org/bukkit/Server.java
+index 6b72eccdcb6f75534a4267a1dd0a4cc2f39e917b..02d814f9080806277177fc55735072bce953d7cc 100644
+--- a/src/main/java/org/bukkit/Server.java
++++ b/src/main/java/org/bukkit/Server.java
+@@ -14,6 +14,7 @@ import java.util.Set;
+ import java.util.UUID;
+ import java.util.function.Consumer;
+ import java.util.logging.Logger;
++import me.friwi.replay.RecordingFactory;
+ import org.bukkit.Warning.WarningState;
+ import org.bukkit.advancement.Advancement;
+ import org.bukkit.block.data.BlockData;
+@@ -61,7 +62,7 @@ import org.jetbrains.annotations.Nullable;
+ /**
+  * Represents a server implementation.
+  */
+-public interface Server extends PluginMessageRecipient, net.kyori.adventure.audience.ForwardingAudience { // Paper
++public interface Server extends PluginMessageRecipient, net.kyori.adventure.audience.ForwardingAudience, RecordingFactory { // Paper  // Replays: Add own interface
+ 
+     /**
+      * Returns the de facto plugins directory, generally used for storing plugin jars to be loaded,

@@ -1,0 +1,1371 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fritz Windisch <friwidev@gmail.com>
+Date: Mon, 24 Jul 2023 21:37:08 +0200
+Subject: [PATCH] API: Add replay API
+
+
+diff --git a/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java b/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java
+index 924539d4ac50c70178ba220424ffacd6ff277c8b..a856b0d771c19384e3ed8488cc1030894db1c5ac 100644
+--- a/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java
++++ b/src/main/java/io/papermc/paper/chunk/system/RegionizedPlayerChunkLoader.java
+@@ -15,6 +15,7 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
+ import it.unimi.dsi.fastutil.longs.LongComparator;
+ import it.unimi.dsi.fastutil.longs.LongHeapPriorityQueue;
+ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
++import me.friwi.replay.RecordablePlayer;
+ import net.minecraft.network.protocol.Packet;
+ import net.minecraft.network.protocol.game.ClientboundSetChunkCacheCenterPacket;
+ import net.minecraft.network.protocol.game.ClientboundSetChunkCacheRadiusPacket;
+@@ -234,7 +235,7 @@ public class RegionizedPlayerChunkLoader {
+     public void tick() {
+         TickThread.ensureTickThread("Cannot tick player chunk loader async");
+         long currTime = System.nanoTime();
+-        for (final ServerPlayer player : new java.util.ArrayList<>(this.world.players())) {
++        for (final ServerPlayer player : new java.util.ArrayList<>(this.world.combinedPlayers())) { // Replays: Use combined players instead
+             final PlayerChunkLoaderData loader = player.chunkLoader;
+             if (loader == null || loader.world != this.world) {
+                 // not our problem anymore
+@@ -612,6 +613,10 @@ public class RegionizedPlayerChunkLoader {
+         }
+ 
+         private double getMaxChunkLoadRate() {
++            // Replays: Faster chunk loading
++            if (this.player instanceof RecordablePlayer) {
++                return 10000;
++            }
+             final double configRate = GlobalConfiguration.get().chunkLoadingBasic.playerMaxChunkLoadRate;
+ 
+             return configRate < 0.0 || configRate > (double)MAX_RATE ? (double)MAX_RATE : Math.max(1.0, configRate);
+@@ -624,6 +629,10 @@ public class RegionizedPlayerChunkLoader {
+         }
+ 
+         private double getMaxChunkSendRate() {
++            // Replays: Faster chunk sending
++            if (this.player instanceof RecordablePlayer) {
++                return 10000;
++            }
+             final double configRate = GlobalConfiguration.get().chunkLoadingBasic.playerMaxChunkSendRate;
+ 
+             return configRate < 0.0 || configRate > (double)MAX_RATE ? (double)MAX_RATE : Math.max(1.0, configRate);
+@@ -658,6 +667,10 @@ public class RegionizedPlayerChunkLoader {
+         }
+ 
+         private boolean wantChunkSent(final int chunkX, final int chunkZ) {
++            // Replays: Use custom relevance logic
++            if (this.player instanceof RecordablePlayer rec) {
++                return rec.isChunkPositionRelevant(null, chunkX, chunkZ);
++            }
+             final int dx = this.lastChunkX - chunkX;
+             final int dz = this.lastChunkZ - chunkZ;
+             return (Math.max(Math.abs(dx), Math.abs(dz)) <= (this.lastSendDistance + 1)) && wantChunkLoaded(
+@@ -666,6 +679,10 @@ public class RegionizedPlayerChunkLoader {
+         }
+ 
+         private boolean wantChunkTicked(final int chunkX, final int chunkZ) {
++            // Replays: Use custom relevance logic
++            if (this.player instanceof RecordablePlayer rec) {
++                return rec.isChunkPositionRelevant(null, chunkX, chunkZ);
++            }
+             final int dx = this.lastChunkX - chunkX;
+             final int dz = this.lastChunkZ - chunkZ;
+             return Math.max(Math.abs(dx), Math.abs(dz)) <= this.lastTickDistance;
+diff --git a/src/main/java/me/friwi/replay/RecordablePlayer.java b/src/main/java/me/friwi/replay/RecordablePlayer.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..0aa0bc2f858a28bd6c2d9a718f6a121c932e8606
+--- /dev/null
++++ b/src/main/java/me/friwi/replay/RecordablePlayer.java
+@@ -0,0 +1,68 @@
++/*
++Paper ReplayMod Recording Creator
++Copyright (C) 2023 FriwiDev
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or
++(at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.friwi.replay;
++
++import com.mojang.authlib.GameProfile;
++import net.minecraft.server.MinecraftServer;
++import net.minecraft.server.level.ServerLevel;
++import net.minecraft.server.level.ServerPlayer;
++
++public class RecordablePlayer extends ServerPlayer {
++    private final Recording recording;
++
++    public RecordablePlayer(MinecraftServer server, ServerLevel world, GameProfile profile, Recording recording) {
++        super(server, world, profile);
++        this.recording = recording;
++        this.isRealPlayer = true;
++        this.loginTime = System.currentTimeMillis();
++    }
++
++    public Recording getRecording() {
++        return this.recording;
++    }
++
++    public boolean isPositionRelevant(ServerLevel level, int x, int y, int z) {
++        return recording.isInViewRange(level, x, y, z);
++    }
++
++    public boolean isChunkPositionRelevant(ServerLevel level, int cx, int cz) {
++        return recording.isInChunkViewRange(level, cx, cz);
++    }
++
++    @Override
++    public void setTickViewDistance(final int distance) {
++        this.updateViewDistance((input) -> {
++            return input.setTickViewDistance(distance);
++        });
++    }
++
++    @Override
++    public void setLoadViewDistance(final int distance) {
++        this.updateViewDistance((input) -> {
++            return input.setLoadViewDistance(distance);
++        });
++    }
++
++    @Override
++    public void setSendViewDistance(final int distance) {
++        this.updateViewDistance((input) -> {
++            return input.setSendViewDistance(distance);
++        });
++    }
++}
+diff --git a/src/main/java/me/friwi/replay/Recording.java b/src/main/java/me/friwi/replay/Recording.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733ae1338f7
+--- /dev/null
++++ b/src/main/java/me/friwi/replay/Recording.java
+@@ -0,0 +1,699 @@
++/*
++Paper ReplayMod Recording Creator
++Copyright (C) 2023 FriwiDev
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or
++(at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.friwi.replay;
++
++import com.google.gson.Gson;
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.mojang.authlib.GameProfile;
++import io.netty.buffer.Unpooled;
++import java.awt.image.BufferedImage;
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
++import java.util.Collection;
++import java.util.HashSet;
++import java.util.LinkedList;
++import java.util.List;
++import java.util.Optional;
++import java.util.Set;
++import java.util.UUID;
++import java.util.concurrent.ConcurrentLinkedQueue;
++import java.util.function.Consumer;
++import java.util.logging.Logger;
++import java.util.zip.CRC32;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++import javax.annotation.Nullable;
++import javax.imageio.ImageIO;
++import net.minecraft.ChatFormatting;
++import net.minecraft.Optionull;
++import net.minecraft.SharedConstants;
++import net.minecraft.network.Connection;
++import net.minecraft.network.ConnectionProtocol;
++import net.minecraft.network.FriendlyByteBuf;
++import net.minecraft.network.PacketSendListener;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.chat.RemoteChatSession;
++import net.minecraft.network.protocol.Packet;
++import net.minecraft.network.protocol.PacketFlow;
++import net.minecraft.network.protocol.game.ClientboundAddPlayerPacket;
++import net.minecraft.network.protocol.game.ClientboundBundlePacket;
++import net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket;
++import net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket;
++import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
++import net.minecraft.network.protocol.game.ClientboundLoginPacket;
++import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
++import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
++import net.minecraft.network.protocol.game.ClientboundSetCarriedItemPacket;
++import net.minecraft.network.protocol.game.ClientboundSetDisplayObjectivePacket;
++import net.minecraft.network.protocol.game.ClientboundSetObjectivePacket;
++import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
++import net.minecraft.network.protocol.game.ClientboundSetScorePacket;
++import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
++import net.minecraft.network.protocol.game.ClientboundTabListPacket;
++import net.minecraft.network.protocol.game.ClientboundUpdateEnabledFeaturesPacket;
++import net.minecraft.network.protocol.login.ClientboundGameProfilePacket;
++import net.minecraft.server.MinecraftServer;
++import net.minecraft.server.ServerScoreboard;
++import net.minecraft.server.level.ServerLevel;
++import net.minecraft.server.level.ServerPlayer;
++import net.minecraft.server.network.ServerGamePacketListenerImpl;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.flag.FeatureFlags;
++import net.minecraft.world.level.GameType;
++import net.minecraft.world.level.biome.BiomeManager;
++import net.minecraft.world.scores.Objective;
++import net.minecraft.world.scores.Team;
++import net.minecraft.world.scores.criteria.ObjectiveCriteria;
++import org.bukkit.Bukkit;
++import org.bukkit.Location;
++import org.bukkit.craftbukkit.CraftWorld;
++import org.jetbrains.annotations.NotNull;
++
++public class Recording {
++    private static final byte[] THUMB_MAGIC_NUMBERS = {0, 1, 1, 2, 3, 5, 8};
++    private static final String GENERATOR = RecordingUtil.getGeneratorName();
++    private static final int REPLAY_FILE_FORMAT_VERSION = 14;
++    private static final Logger LOGGER = Logger.getLogger(Recording.class.getName());
++
++    private static final Gson GSON = new Gson();
++
++    private final File dir;
++    private final File tmcpr;
++    private final File inittmcpr;
++    private final File infotmcpr;
++    private final File mcpr;
++    private final OutputStream fos;
++    private final OutputStream fosi;
++    private final OutputStream fosin;
++    private final FriendlyByteBuf serializeBuf;
++    private final ByteBuffer prefix;
++    private final ConcurrentLinkedQueue<Packet<?>> packetQueue;
++    private final ConcurrentLinkedQueue<Packet<?>> initPacketQueue;
++    private final ConcurrentLinkedQueue<Packet<?>> infoPacketQueue;
++    private final ServerLevel w;
++    private final int lcx;
++    private final int hcx;
++    private final int lcz;
++    private final int hcz;
++    private final double vx;
++    private final double vy;
++    private final double vz;
++    private final float vyaw;
++    private final float vpitch;
++    private final UUID myPlayerId;
++    private final Set<UUID> occuringPlayers;
++    private final List<File> usedResourcePacks;
++    private final Object lock;
++    private boolean active;
++    private long startTime;
++    private long stopTime;
++    private RecordablePlayer fakePlayer;
++    private String serverIP;
++    private String customServerName;
++    private BufferedImage thumbnail = null;
++    private Consumer<File> onFinishedReplay;
++
++    public Recording(File dir, Location initialViewPoint, int lcx, int hcx, int lcz, int hcz) throws IOException {
++        this(dir, ((CraftWorld) initialViewPoint.getWorld()).getHandle(),
++            initialViewPoint.getX(), initialViewPoint.getY(), initialViewPoint.getZ(), initialViewPoint.getYaw(), initialViewPoint.getPitch(),
++            lcx, hcx, lcz, hcz);
++    }
++
++    public Recording(File dir, ServerLevel w, double vx, double vy, double vz, float vyaw, float vpitch, int lcx, int hcx, int lcz, int hcz)
++        throws IOException {
++        this.dir = dir;
++        if (!this.dir.exists()) {
++            this.dir.mkdirs();
++        }
++        this.tmcpr = new File(dir, "recording.tmcpr");
++        this.inittmcpr = new File(dir, "init.tmcpr");
++        this.infotmcpr = new File(dir, "info.tmcpr");
++        this.mcpr = new File(dir, dir.getName() + ".mcpr");
++        tmcpr.createNewFile();
++        fos = new FileOutputStream(tmcpr);
++        inittmcpr.createNewFile();
++        fosi = new FileOutputStream(inittmcpr);
++        infotmcpr.createNewFile();
++        fosin = new FileOutputStream(infotmcpr);
++        serializeBuf = new FriendlyByteBuf(Unpooled.buffer(1024 * 1024));
++        prefix = ByteBuffer.allocate(8);
++        packetQueue = new ConcurrentLinkedQueue<>();
++        initPacketQueue = new ConcurrentLinkedQueue<>();
++        infoPacketQueue = new ConcurrentLinkedQueue<>();
++        this.myPlayerId = UUID.randomUUID();
++        this.w = w;
++        this.lcx = Math.min(lcx, hcx);
++        this.hcx = Math.max(lcx, hcx);
++        this.lcz = Math.min(lcz, hcz);
++        this.hcz = Math.max(lcz, hcz);
++        this.occuringPlayers = new HashSet<>();
++        this.vx = vx;
++        this.vy = vy;
++        this.vz = vz;
++        this.vyaw = vyaw;
++        this.vpitch = vpitch;
++        this.serverIP = Bukkit.getIp().isEmpty() ? "0.0.0.0" : Bukkit.getIp();
++        this.customServerName = MinecraftServer.getServer().getMotd().split("\n")[0];
++        this.usedResourcePacks = new LinkedList<>();
++        if (!Bukkit.getServer().getResourcePack().isEmpty()) {
++            this.usedResourcePacks.add(new File(Bukkit.getServer().getResourcePack()));
++        }
++        this.lock = new Object();
++    }
++
++    public synchronized void beginRecording() {
++        if (active || this.stopTime != 0) {
++            return;
++        }
++        //Subscribe to updates
++        active = true;
++        startTime = System.currentTimeMillis();
++
++        //Initialize injected player
++        fakePlayer = new RecordablePlayer(MinecraftServer.getServer(), w, new GameProfile(myPlayerId, "Recorder"), this);
++        fakePlayer.connection = new ServerGamePacketListenerImpl(MinecraftServer.getServer(), new Connection(PacketFlow.SERVERBOUND) {
++            @Override
++            public void send(@NotNull Packet<?> packet, @Nullable PacketSendListener callbacks) {
++                if (packet instanceof ClientboundBundlePacket bundle) { //Need to unwind for packet processing in appendPacket
++                    for (Packet<?> p : bundle.subPackets()) {
++                        send(p, callbacks);
++                    }
++                    return;
++                }
++                if (!(packet instanceof ClientboundPlayerInfoUpdatePacket)) { //We have our own implementation for this
++                    appendPacket(packet, 2);
++                }
++            }
++        }, fakePlayer);
++        int px = (lcx + hcx) / 2 << 4;
++        int pz = (lcz + hcz) / 2 << 4;
++        fakePlayer.setPosRaw(px, -5000, pz);
++        int viewDistance = (int) Math.ceil(Math.sqrt(Math.pow(Math.abs(lcx - hcx) / 2d, 2) + Math.pow(Math.abs(lcz - hcz) / 2d, 2)));
++        fakePlayer.clientViewDistance = viewDistance * 2 + 2;
++        fakePlayer.setLoadViewDistance(viewDistance + 2);
++        fakePlayer.setSendViewDistance(viewDistance);
++        fakePlayer.setTickViewDistance(viewDistance);
++
++        //Play login packets
++        appendPacket(new ClientboundGameProfilePacket(fakePlayer.gameProfile), 0);
++
++        //Play join packets
++        appendPacket(new ClientboundLoginPacket(fakePlayer.getId(),
++            w.getWorld().isHardcore(),
++            GameType.SPECTATOR,
++            GameType.SPECTATOR,
++            MinecraftServer.getServer().levelKeys(),
++            MinecraftServer.getServer().getPlayerList().synchronizedRegistries,
++            w.dimensionTypeId(),
++            w.dimension(),
++            BiomeManager.obfuscateSeed(w.getSeed()),
++            MinecraftServer.getServer().getMaxPlayers(),
++            w.getWorld().getSendViewDistance(),
++            w.getWorld().getSimulationDistance(),
++            false,
++            false,
++            w.isDebug(),
++            w.isFlat(),
++            Optional.empty(),
++            fakePlayer.getPortalCooldown()), 0);
++        appendPacket(new ClientboundUpdateEnabledFeaturesPacket(FeatureFlags.REGISTRY.toNames(w.enabledFeatures())), 0);
++        appendPacket(new ClientboundCustomPayloadPacket(ClientboundCustomPayloadPacket.BRAND, (new FriendlyByteBuf(Unpooled.buffer())).writeUtf(GENERATOR)), 0);
++        appendPacket(new ClientboundChangeDifficultyPacket(w.getDifficulty(), false), 0);
++        appendPacket(new ClientboundPlayerAbilitiesPacket(fakePlayer.getAbilities()), 0);
++        appendPacket(new ClientboundSetCarriedItemPacket(0), 0);
++
++        fakePlayer.connection.send(new ClientboundEntityEventPacket(fakePlayer, (byte) 28)); //28 means all permissions
++
++        fakePlayer.connection.teleport(vx, vy, vz, vyaw, vpitch);
++
++        fakePlayer.setServerLevel(w);
++        fakePlayer.setLevel(w);
++        fakePlayer.gameMode.setLevel(w);
++        fakePlayer.valid = true;
++
++        //Add to PlayerChunkMap to receive initial chunks and keep everything in sync
++        w.recorders.add(fakePlayer);
++        w.addNewPlayer(fakePlayer);
++
++        //Start encoding
++        this.startEncodingThread();
++    }
++
++    public synchronized void endRecording(Consumer<File> onFinishedReplay) {
++        if (!active) {
++            return;
++        }
++        this.onFinishedReplay = onFinishedReplay;
++        //Unsubscribe from all packet events
++        active = false;
++        synchronized (lock) {
++            lock.notifyAll();
++        }
++
++        //Unsubscribe from PlayerChunkMap
++        w.removePlayerImmediately(fakePlayer, Entity.RemovalReason.DISCARDED);
++        w.recorders.remove(fakePlayer);
++    }
++
++    public void appendPacket(Packet<?> packet, int queue) {
++        appendPacket(packet, false, queue);
++    }
++
++    public void appendPacket(Packet<?> packet, int cx, int cz, int queue) {
++        if (isInViewRange(w, cx << 4, 0, cz << 4)) {
++            appendPacket(packet, false, queue);
++        }
++    }
++
++    private void appendPacket(Packet<?> packet, boolean force, int queue) {
++        if (active || force) {
++            if (packet == null) {
++                return;
++            }
++            switch (queue) {
++                case 0 -> initPacketQueue.add(packet);
++                case 1 -> infoPacketQueue.add(packet);
++                case 2 -> packetQueue.add(packet);
++                default -> throw new RuntimeException("Queue id " + queue + " is invalid. Use 0-2 instead.");
++            }
++            synchronized (lock) {
++                lock.notifyAll();
++            }
++        }
++    }
++
++    private void writePacket(OutputStream out, int time, Packet packet) throws IOException {
++        if (packet == null) {
++            return;
++        }
++        if (packet instanceof ClientboundBundlePacket bundle) {
++            for (Packet<?> p : bundle.subPackets()) {
++                writePacket(out, time, p);
++            }
++            return;
++        }
++        //Replay format per packet:
++        //int timestamp
++        //int packet.length
++        //byte[] packet
++        serializeBuf.writerIndex(0);
++        int packetId =
++            (packet instanceof ClientboundGameProfilePacket ? ConnectionProtocol.LOGIN : ConnectionProtocol.PLAY).getPacketId(PacketFlow.CLIENTBOUND, packet);
++        serializeBuf.writeVarInt(packetId); //VarInt
++        packet.write(serializeBuf);
++        prefix.position(0);
++        prefix.putInt(time);
++        prefix.putInt(serializeBuf.writerIndex());
++        out.write(prefix.array());
++        out.write(serializeBuf.array(), 0, serializeBuf.writerIndex());
++    }
++
++    public boolean isActive() {
++        return active;
++    }
++
++    public boolean isInViewRange(ServerLevel w, int x, int y, int z) {
++        if (w != null && !w.getWorld().getUID().equals(this.w.getWorld().getUID())) {
++            return false;
++        }
++        return lcx <= (x >> 4) && hcx >= (x >> 4) && lcz <= (z >> 4) && hcz >= (z >> 4);
++    }
++
++    public boolean isInChunkViewRange(ServerLevel w, int cx, int cz) {
++        if (w != null && !w.getWorld().getUID().equals(this.w.getWorld().getUID())) {
++            return false;
++        }
++        return lcx <= cx && hcx >= cx && lcz <= cz && hcz >= cz;
++    }
++
++    private void startEncodingThread() {
++        new Thread("Replay-Encoder-" + dir.getName()) {
++            @Override
++            public void run() {
++                synchronized (lock) {
++                    while (active) {
++                        try {
++                            lock.wait();
++                        } catch (InterruptedException e) {
++                            throw new RuntimeException(e);
++                        }
++                        while (!packetQueue.isEmpty()) {
++                            Packet<?> p = packetQueue.poll();
++                            if (p instanceof ClientboundAddPlayerPacket cap) {
++                                if (occuringPlayers.add(cap.getPlayerId())) {
++                                    //New player! Play out tab!
++                                    ServerPlayer player = MinecraftServer.getServer().getPlayerList().getPlayer(cap.getPlayerId());
++                                    if (player != null) {
++                                        initPacketQueue.add(
++                                            new ClientboundPlayerInfoUpdatePacket(
++                                                new ClientboundPlayerInfoUpdatePacket.Action[] {ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER},
++                                                new ClientboundPlayerInfoUpdatePacket.Entry(
++                                                    player.getUUID(),
++                                                    player.getGameProfile(),
++                                                    true,
++                                                    player.latency,
++                                                    player.gameMode.getGameModeForPlayer(),
++                                                    player.listName,
++                                                    Optionull.map(player.getChatSession(), RemoteChatSession::asData)
++                                                )
++                                            )
++                                        );
++                                    }
++                                }
++                            }
++                            try {
++                                writePacket(fos, (int) (System.currentTimeMillis() - startTime), p);
++                            } catch (IOException e) {
++                                e.printStackTrace();
++                            }
++                        }
++                        while (!initPacketQueue.isEmpty()) {
++                            Packet<?> p = initPacketQueue.poll();
++                            try {
++                                writePacket(fosi, 0, p);
++                            } catch (IOException e) {
++                                e.printStackTrace();
++                            }
++                        }
++                        while (!infoPacketQueue.isEmpty()) {
++                            Packet<?> p = infoPacketQueue.poll();
++                            try {
++                                writePacket(fosin, 0, p);
++                            } catch (IOException e) {
++                                e.printStackTrace();
++                            }
++                        }
++                    }
++                }
++                //Replay finished. Save metadata and finalize
++                stopTime = System.currentTimeMillis();
++                try {
++                    //Flush replay writing
++                    fosi.flush();
++                    fosi.close();
++                    fosin.flush();
++                    fosin.close();
++                    fos.flush();
++                    fos.close();
++
++                    //Resource packs
++                    JsonObject rpIndexObj = new JsonObject();
++                    int numRp = 0;
++                    for (File f : usedResourcePacks) {
++                        if (f.exists()) {
++                            rpIndexObj.addProperty(String.valueOf(numRp), f.getName().split("\\.")[0]);
++                            numRp++;
++                        }
++                    }
++                    String rpIndex = GSON.toJson(rpIndexObj);
++
++                    //Mods
++                    JsonObject modsObj = new JsonObject();
++                    modsObj.add("requiredMods", new JsonArray(0));
++                    String mods = GSON.toJson(modsObj);
++
++                    //Metadata
++                    long duration = stopTime - startTime;
++                    JsonArray playerList = new JsonArray(occuringPlayers.size());
++                    for (UUID u : occuringPlayers) {
++                        playerList.add(u.toString());
++                    }
++                    JsonObject metaDataObj = new JsonObject();
++                    metaDataObj.addProperty("singpleplayer", false);
++                    metaDataObj.addProperty("serverName", serverIP);
++                    metaDataObj.addProperty("customServerName", customServerName);
++                    metaDataObj.addProperty("duration", duration);
++                    metaDataObj.addProperty("date", startTime);
++                    metaDataObj.addProperty("mcversion", SharedConstants.getCurrentVersion().getName());
++                    metaDataObj.addProperty("fileFormat", "MCPR");
++                    metaDataObj.addProperty("fileFormatVersion", REPLAY_FILE_FORMAT_VERSION);
++                    metaDataObj.addProperty("protocol", SharedConstants.getProtocolVersion());
++                    metaDataObj.addProperty("generator", GENERATOR);
++                    metaDataObj.addProperty("selfId", -1);
++                    metaDataObj.add("players", playerList);
++                    String metaData = GSON.toJson(metaDataObj);
++
++                    //Hash
++                    CRC32 crc = new CRC32();
++                    mcpr.createNewFile();
++                    ZipOutputStream out = new ZipOutputStream(new FileOutputStream(mcpr));
++
++                    ZipEntry e = new ZipEntry(tmcpr.getName());
++                    out.putNextEntry(e);
++                    FileInputStream fis = new FileInputStream(inittmcpr);
++                    byte[] copy = new byte[4096];
++                    while (fis.available() > 0) {
++                        int r = fis.read(copy);
++                        out.write(copy, 0, r);
++                        crc.update(copy, 0, r);
++                    }
++                    fis.close();
++                    fis = new FileInputStream(infotmcpr);
++                    while (fis.available() > 0) {
++                        int r = fis.read(copy);
++                        out.write(copy, 0, r);
++                        crc.update(copy, 0, r);
++                    }
++                    fis.close();
++                    fis = new FileInputStream(tmcpr);
++                    while (fis.available() > 0) {
++                        int r = fis.read(copy);
++                        out.write(copy, 0, r);
++                        crc.update(copy, 0, r);
++                    }
++                    fis.close();
++                    out.closeEntry();
++                    inittmcpr.delete();
++                    infotmcpr.delete();
++                    tmcpr.delete();
++
++                    prefix.position(0);
++                    prefix.putLong(crc.getValue());
++                    byte[] crc32 = prefix.array();
++
++                    insertZip(out, "recording.tmcpr.crc32", crc32);
++                    insertZip(out, "mods.json", mods.getBytes(StandardCharsets.ISO_8859_1));
++                    insertZip(out, "metaData.json", metaData.getBytes(StandardCharsets.ISO_8859_1));
++
++                    if (thumbnail != null) {
++                        e = new ZipEntry("thumb");
++                        out.putNextEntry(e);
++                        out.write(THUMB_MAGIC_NUMBERS);
++                        ImageIO.write(thumbnail, "jpg", out);
++                        out.closeEntry();
++                    }
++
++                    //Resourcepacks
++                    insertZip(out, "resourcepack/index.json", rpIndex.getBytes(StandardCharsets.ISO_8859_1));
++                    for (File f : usedResourcePacks) {
++                        if (f.exists()) {
++                            String entryName = "resourcepack/" + f.getName().split("\\.")[0] + ".zip";
++                            e = new ZipEntry(entryName);
++                            out.putNextEntry(e);
++                            fis = new FileInputStream(f);
++                            while (fis.available() > 0) {
++                                int r = fis.read(copy);
++                                out.write(copy, 0, r);
++                            }
++                            fis.close();
++                            out.closeEntry();
++                        }
++                    }
++
++                    out.close();
++
++                    serializeBuf.release();
++
++                    onFinishedReplay.accept(mcpr);
++                } catch (IOException e) {
++                    e.printStackTrace();
++                }
++            }
++        }.start();
++    }
++
++    private void insertZip(ZipOutputStream out, String s, byte[] b) throws IOException {
++        ZipEntry e = new ZipEntry(s);
++        out.putNextEntry(e);
++        out.write(b, 0, b.length);
++        out.closeEntry();
++    }
++
++    // Internal API begins from here
++    public ServerLevel getWorld() {
++        return w;
++    }
++
++    public boolean addResourcePack(File file) {
++        return this.usedResourcePacks.add(file);
++    }
++
++    public boolean removeResourcePack(File file) {
++        return this.usedResourcePacks.remove(file);
++    }
++
++    public List<File> getAllResourcePacks() {
++        return this.usedResourcePacks;
++    }
++
++    public void addChat(String message) {
++        appendPacket(new ClientboundSystemChatPacket(Component.literal(message), false), 2);
++    }
++
++    public void addChat(Component component) {
++        appendPacket(new ClientboundSystemChatPacket(component, false), 2);
++    }
++
++    public Collection<UUID> getOccuringPlayers() {
++        return List.copyOf(occuringPlayers);
++    }
++
++    public void setTablistHeaderFooter(String header, String footer) {
++        this.setTablistHeaderFooter(Component.literal(header), Component.literal(footer));
++    }
++
++    public void setTablistHeaderFooter(Component header, Component footer) {
++        appendPacket(new ClientboundTabListPacket(header, footer), 1);
++    }
++
++    public void setPlayerListName(UUID uuid, String listName) {
++        ServerPlayer player = MinecraftServer.getServer().getPlayerList().getPlayer(uuid);
++        if (player != null) {
++            appendPacket(
++                new ClientboundPlayerInfoUpdatePacket(
++                    new ClientboundPlayerInfoUpdatePacket.Action[] {ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME},
++                    new ClientboundPlayerInfoUpdatePacket.Entry(
++                        player.getUUID(),
++                        player.getGameProfile(),
++                        true,
++                        player.latency,
++                        player.gameMode.getGameModeForPlayer(),
++                        Component.literal(listName),
++                        Optionull.map(player.getChatSession(), RemoteChatSession::asData)
++                    )
++                ), 1);
++        }
++    }
++
++    public void createObjective(String objectiveName, String text) {
++        createObjective(objectiveName, text, false);
++    }
++
++    public void createObjective(String objectiveName, String text, boolean displayAsHeart) {
++        Objective objective = new Objective(
++            MinecraftServer.getServer().getScoreboard(),
++            objectiveName,
++            ObjectiveCriteria.DUMMY,
++            Component.literal(text),
++            displayAsHeart ? ObjectiveCriteria.RenderType.HEARTS : ObjectiveCriteria.RenderType.INTEGER
++        );
++        appendPacket(new ClientboundSetObjectivePacket(objective, ClientboundSetObjectivePacket.METHOD_ADD), 1);
++    }
++
++    public void displayObjectiveList(String objectiveName) {
++        displayObjective(0, objectiveName);
++    }
++
++    public void displayObjectiveSidebar(String objectiveName) {
++        displayObjective(1, objectiveName);
++    }
++
++    public void displayObjectiveBelowName(String objectiveName) {
++        displayObjective(2, objectiveName);
++    }
++
++    private void displayObjective(int slot, String objectiveName) {
++        Objective objective = new Objective(
++            MinecraftServer.getServer().getScoreboard(),
++            objectiveName,
++            ObjectiveCriteria.DUMMY,
++            Component.literal(objectiveName),
++            ObjectiveCriteria.RenderType.INTEGER
++        );
++        appendPacket(new ClientboundSetDisplayObjectivePacket(slot, objective), 1);
++    }
++
++    public void addOrUpdateScore(String score, String objectiveName, int value) {
++        appendPacket(new ClientboundSetScorePacket(ServerScoreboard.Method.CHANGE, objectiveName, score, value), 2);
++    }
++
++    public void removeScore(String score) {
++        appendPacket(new ClientboundSetScorePacket(ServerScoreboard.Method.REMOVE, null, score, 0), 2);
++    }
++
++    public void createTeam(String team, ChatFormatting color, String displayName, String prefix, String suffix, Collection<String> players) {
++        appendPacket(new ClientboundSetPlayerTeamPacket(team, ClientboundSetPlayerTeamPacket.METHOD_ADD,
++            Optional.of(new ClientboundSetPlayerTeamPacket.Parameters(Component.literal(displayName), Component.literal(prefix), Component.literal(suffix),
++                Team.Visibility.ALWAYS.name, Team.CollisionRule.NEVER.name, color, 0)), players), 1);
++    }
++
++    public void removeTeam(String team) {
++        appendPacket(new ClientboundSetPlayerTeamPacket(team, ClientboundSetPlayerTeamPacket.METHOD_REMOVE,
++            Optional.empty(), List.of()), 2);
++    }
++
++    public void updateTeamInfo(String team, ChatFormatting color, String displayName, String prefix, String suffix) {
++        appendPacket(new ClientboundSetPlayerTeamPacket(team, ClientboundSetPlayerTeamPacket.METHOD_CHANGE,
++            Optional.of(new ClientboundSetPlayerTeamPacket.Parameters(Component.literal(displayName), Component.literal(prefix), Component.literal(suffix),
++                Team.Visibility.ALWAYS.name, Team.CollisionRule.NEVER.name, color, 0)), List.of()), 2);
++    }
++
++    public void addPlayersToTeam(String team, Collection<String> players) {
++        appendPacket(new ClientboundSetPlayerTeamPacket(team, ClientboundSetPlayerTeamPacket.METHOD_JOIN,
++            Optional.empty(), players), 2);
++    }
++
++    public void removePlayersFromTeam(String team, Collection<String> players) {
++        appendPacket(new ClientboundSetPlayerTeamPacket(team, ClientboundSetPlayerTeamPacket.METHOD_LEAVE,
++            Optional.empty(), players), 2);
++    }
++
++    public String getServerIP() {
++        return serverIP;
++    }
++
++    public void setServerIP(String serverIP) {
++        this.serverIP = serverIP;
++    }
++
++    public String getCustomServerName() {
++        return customServerName;
++    }
++
++    public void setCustomServerName(String customServerName) {
++        this.customServerName = customServerName;
++    }
++
++    public BufferedImage getThumbnail() {
++        return thumbnail;
++    }
++
++    public void setThumbnail(BufferedImage image) {
++        if (image.getWidth() != 1280 || image.getHeight() != 720) {
++            throw new IllegalArgumentException("Invalid replay thumbnail dimensions. Needs to be 1280x720");
++        }
++        this.thumbnail = image;
++    }
++}
+diff --git a/src/main/java/me/friwi/replay/RecordingCreatorImpl.java b/src/main/java/me/friwi/replay/RecordingCreatorImpl.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..aa7fd8a2e150cf95901b40e9338948c841ab47b5
+--- /dev/null
++++ b/src/main/java/me/friwi/replay/RecordingCreatorImpl.java
+@@ -0,0 +1,231 @@
++/*
++Paper ReplayMod Recording Creator
++Copyright (C) 2023 FriwiDev
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or
++(at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.friwi.replay;
++
++import java.awt.image.BufferedImage;
++import java.io.File;
++import java.io.IOException;
++import java.util.Collection;
++import java.util.List;
++import java.util.UUID;
++import java.util.function.Consumer;
++import net.kyori.adventure.text.Component;
++import net.minecraft.ChatFormatting;
++import net.minecraft.network.protocol.Packet;
++import org.bukkit.Color;
++import org.bukkit.Location;
++import org.bukkit.World;
++import org.bukkit.craftbukkit.CraftWorld;
++
++public class RecordingCreatorImpl implements RecordingCreator {
++    private final Recording recording;
++
++    public RecordingCreatorImpl(File dir, Location spawnLocation, int lcx, int hcx, int lcz, int hcz) throws IOException {
++        this.recording = new Recording(dir, spawnLocation, lcx, hcx, lcz, hcz);
++    }
++
++    @Override
++    public void beginRecording() {
++        this.recording.beginRecording();
++    }
++
++    @Override
++    public void endRecording(Consumer<File> onComplete) {
++        this.recording.endRecording(onComplete);
++    }
++
++    @Override
++    public BufferedImage getThumbnail() {
++        return this.recording.getThumbnail();
++    }
++
++    @Override
++    public void setThumbnail(BufferedImage image) {
++        this.recording.setThumbnail(image);
++    }
++
++    @Override
++    public String getCustomServerName() {
++        return this.recording.getCustomServerName();
++    }
++
++    @Override
++    public void setCustomServerName(String customServerName) {
++        this.recording.setCustomServerName(customServerName);
++    }
++
++    @Override
++    public String getServerIP() {
++        return this.recording.getServerIP();
++    }
++
++    @Override
++    public void setServerIP(String serverIP) {
++        this.recording.setServerIP(serverIP);
++    }
++
++    @Override
++    public void setTablistHeaderFooter(String header, String footer) {
++        this.recording.setTablistHeaderFooter(header, footer);
++    }
++
++    @Override
++    public void setTablistHeaderFooter(Component header, Component footer) {
++        this.recording.setTablistHeaderFooter(
++            io.papermc.paper.adventure.PaperAdventure.asVanilla(header),
++            io.papermc.paper.adventure.PaperAdventure.asVanilla(footer)
++        );
++    }
++
++    @Override
++    public void setPlayerListName(UUID uuid, String listName) {
++        this.recording.setPlayerListName(uuid, listName);
++    }
++
++    @Override
++    public void createObjective(String objectiveName, String text) {
++        this.recording.createObjective(objectiveName, text);
++    }
++
++    @Override
++    public void createObjective(String objectiveName, String text, boolean displayAsHeart) {
++        this.recording.createObjective(objectiveName, text, displayAsHeart);
++    }
++
++    @Override
++    public void displayObjectiveList(String objectiveName) {
++        this.recording.displayObjectiveList(objectiveName);
++    }
++
++    @Override
++    public void displayObjectiveSidebar(String objectiveName) {
++        this.recording.displayObjectiveSidebar(objectiveName);
++    }
++
++    @Override
++    public void displayObjectiveBelowName(String objectiveName) {
++        this.recording.displayObjectiveBelowName(objectiveName);
++    }
++
++    @Override
++    public void createTeam(String team, Color color, String displayName, String prefix, String suffix, Collection<String> players) {
++        this.recording.createTeam(team, ChatFormatting.getByHexValue(color.asRGB()), displayName, prefix, suffix, players);
++    }
++
++    @Override
++    public Collection<UUID> getOccuringPlayers() {
++        return this.recording.getOccuringPlayers();
++    }
++
++    @Override
++    public World getWorld() {
++        return this.recording.getWorld().getWorld();
++    }
++
++    @Override
++    public boolean addResourcePack(File file) {
++        return this.recording.addResourcePack(file);
++    }
++
++    @Override
++    public boolean removeResourcePack(File file) {
++        return this.recording.removeResourcePack(file);
++    }
++
++    @Override
++    public List<File> getAllResourcePacks() {
++        return this.recording.getAllResourcePacks();
++    }
++
++    @Override
++    public void appendPacket(Object packet) {
++        this.recording.appendPacket((Packet<?>) packet, 2);
++    }
++
++    @Override
++    public void appendPacketWithLocation(Object packet, Location location) {
++        if (this.isLocationRelevant(location)) {
++            this.recording.appendPacket((Packet<?>) packet, 2);
++        }
++    }
++
++    @Override
++    public void appendPacketWithLocation(Object packet, int x, int y, int z) {
++        if (this.recording.isInViewRange(null, x, y, z)) {
++            this.recording.appendPacket((Packet<?>) packet, 2);
++        }
++    }
++
++    @Override
++    public void appendPacketWithChunkLocation(Object packet, int cx, int cz) {
++        if (this.recording.isInChunkViewRange(null, cx, cz)) {
++            this.recording.appendPacket((Packet<?>) packet, 2);
++        }
++    }
++
++    @Override
++    public void addChat(String message) {
++        this.recording.addChat(message);
++    }
++
++    @Override
++    public void addChat(Component component) {
++        this.recording.addChat(io.papermc.paper.adventure.PaperAdventure.asVanilla(component));
++    }
++
++    @Override
++    public void addOrUpdateScore(String score, String objectiveName, int value) {
++        this.recording.addOrUpdateScore(score, objectiveName, value);
++    }
++
++    @Override
++    public void removeScore(String score) {
++        this.recording.removeScore(score);
++    }
++
++    @Override
++    public void removeTeam(String team) {
++        this.recording.removeTeam(team);
++    }
++
++    @Override
++    public void updateTeamInfo(String team, Color color, String displayName, String prefix, String suffix) {
++        this.recording.updateTeamInfo(team, ChatFormatting.getByHexValue(color.asRGB()), displayName, prefix, suffix);
++    }
++
++    @Override
++    public void addPlayersToTeam(String team, Collection<String> players) {
++        this.recording.addPlayersToTeam(team, players);
++    }
++
++    @Override
++    public void removePlayersFromTeam(String team, Collection<String> players) {
++        this.recording.removePlayersFromTeam(team, players);
++    }
++
++    @Override
++    public boolean isLocationRelevant(Location loc) {
++        return this.recording.isInViewRange(((CraftWorld) loc.getWorld()).getHandle().getLevel(), loc.getBlockX(), loc.getBlockY(), loc.getBlockZ());
++    }
++
++    @Override
++    public boolean isActive() {
++        return this.recording.isActive();
++    }
++}
+diff --git a/src/main/java/me/friwi/replay/RecordingUtil.java b/src/main/java/me/friwi/replay/RecordingUtil.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..263823413149ce3163b81eb94928a376f951ba32
+--- /dev/null
++++ b/src/main/java/me/friwi/replay/RecordingUtil.java
+@@ -0,0 +1,32 @@
++/*
++Paper ReplayMod Recording Creator
++Copyright (C) 2023 FriwiDev
++
++This program is free software: you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or
++(at your option) any later version.
++
++This program is distributed in the hope that it will be useful,
++but WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++GNU General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package me.friwi.replay;
++
++import io.papermc.paper.util.JarManifests;
++import net.minecraft.server.MinecraftServer;
++import org.bukkit.Bukkit;
++
++public class RecordingUtil {
++    protected static String getGeneratorName() {
++        final var manifest = JarManifests.manifest(Bukkit.getServer().getClass());
++        final String gitCommit = manifest == null ? null : manifest.getMainAttributes().getValue("Git-Commit");
++
++        return "Paper ReplayMod Recording Creator v" + MinecraftServer.getServer().getServerVersion() + "-" + gitCommit;
++    }
++}
+diff --git a/src/main/java/net/minecraft/network/protocol/game/ClientboundPlayerInfoUpdatePacket.java b/src/main/java/net/minecraft/network/protocol/game/ClientboundPlayerInfoUpdatePacket.java
+index 4aa8b483841028fbcc43f9ed47730881263e5065..bd7aede83fe9609bc091d97742f64e0b62057eb8 100644
+--- a/src/main/java/net/minecraft/network/protocol/game/ClientboundPlayerInfoUpdatePacket.java
++++ b/src/main/java/net/minecraft/network/protocol/game/ClientboundPlayerInfoUpdatePacket.java
+@@ -2,10 +2,8 @@ package net.minecraft.network.protocol.game;
+ 
+ import com.google.common.base.MoreObjects;
+ import com.mojang.authlib.GameProfile;
+-import java.util.Collection;
+-import java.util.EnumSet;
+-import java.util.List;
+-import java.util.UUID;
++
++import java.util.*;
+ import javax.annotation.Nullable;
+ import net.minecraft.Optionull;
+ import net.minecraft.network.FriendlyByteBuf;
+@@ -29,6 +27,12 @@ public class ClientboundPlayerInfoUpdatePacket implements Packet<ClientGamePacke
+         this.entries = List.of(new ClientboundPlayerInfoUpdatePacket.Entry(player));
+     }
+ 
++    // Replays: Add constructor
++    public ClientboundPlayerInfoUpdatePacket(ClientboundPlayerInfoUpdatePacket.Action[] actions, ClientboundPlayerInfoUpdatePacket.Entry entry) {
++        this.actions = EnumSet.copyOf(Arrays.stream(actions).toList());
++        this.entries = List.of(entry);
++    }
++
+     public static ClientboundPlayerInfoUpdatePacket createPlayerInitializing(Collection<ServerPlayer> players) {
+         EnumSet<ClientboundPlayerInfoUpdatePacket.Action> enumSet = EnumSet.of(ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER, ClientboundPlayerInfoUpdatePacket.Action.INITIALIZE_CHAT, ClientboundPlayerInfoUpdatePacket.Action.UPDATE_GAME_MODE, ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LISTED, ClientboundPlayerInfoUpdatePacket.Action.UPDATE_LATENCY, ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME);
+         return new ClientboundPlayerInfoUpdatePacket(enumSet, players);
+diff --git a/src/main/java/net/minecraft/network/protocol/game/ClientboundSetPlayerTeamPacket.java b/src/main/java/net/minecraft/network/protocol/game/ClientboundSetPlayerTeamPacket.java
+index 4ebe22ac20f1a98694cc3bec570ef5bbf06f00aa..288410228204b51852408e53952e79a8f04b02c3 100644
+--- a/src/main/java/net/minecraft/network/protocol/game/ClientboundSetPlayerTeamPacket.java
++++ b/src/main/java/net/minecraft/network/protocol/game/ClientboundSetPlayerTeamPacket.java
+@@ -11,11 +11,11 @@ import net.minecraft.network.protocol.Packet;
+ import net.minecraft.world.scores.PlayerTeam;
+ 
+ public class ClientboundSetPlayerTeamPacket implements Packet<ClientGamePacketListener> {
+-    private static final int METHOD_ADD = 0;
+-    private static final int METHOD_REMOVE = 1;
+-    private static final int METHOD_CHANGE = 2;
+-    private static final int METHOD_JOIN = 3;
+-    private static final int METHOD_LEAVE = 4;
++    public static final int METHOD_ADD = 0; // Replays: Make public
++    public static final int METHOD_REMOVE = 1; // Replays: Make public
++    public static final int METHOD_CHANGE = 2; // Replays: Make public
++    public static final int METHOD_JOIN = 3; // Replays: Make public
++    public static final int METHOD_LEAVE = 4; // Replays: Make public
+     private static final int MAX_VISIBILITY_LENGTH = 40;
+     private static final int MAX_COLLISION_LENGTH = 40;
+     private final int method;
+@@ -23,7 +23,9 @@ public class ClientboundSetPlayerTeamPacket implements Packet<ClientGamePacketLi
+     private final Collection<String> players;
+     private final Optional<ClientboundSetPlayerTeamPacket.Parameters> parameters;
+ 
+-    private ClientboundSetPlayerTeamPacket(String teamName, int packetType, Optional<ClientboundSetPlayerTeamPacket.Parameters> team, Collection<String> playerNames) {
++    // Replays: Make public
++    public ClientboundSetPlayerTeamPacket(String teamName, int packetType, Optional<ClientboundSetPlayerTeamPacket.Parameters> team,
++                                          Collection<String> playerNames) {
+         this.name = teamName;
+         this.method = packetType;
+         this.parameters = team;
+@@ -147,6 +149,19 @@ public class ClientboundSetPlayerTeamPacket implements Packet<ClientGamePacketLi
+         private final ChatFormatting color;
+         private final int options;
+ 
++        // Replays: Add constructor with all args
++        public Parameters(Component displayName, Component playerPrefix, Component playerSuffix, String nametagVisibility, String collisionRule,
++                          ChatFormatting color,
++                          int options) {
++            this.displayName = displayName;
++            this.playerPrefix = playerPrefix;
++            this.playerSuffix = playerSuffix;
++            this.nametagVisibility = nametagVisibility;
++            this.collisionRule = collisionRule;
++            this.color = color;
++            this.options = options;
++        }
++
+         public Parameters(PlayerTeam team) {
+             this.displayName = team.getDisplayName();
+             this.options = team.packOptions();
+diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
+index 469083208110d5735e1bbda7a15c55a032d0e8cc..07f741ab0e9326c36e8965950477233ad456918a 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkMap.java
++++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
+@@ -54,6 +54,7 @@ import java.util.function.IntSupplier;
+ import java.util.function.Supplier;
+ import java.util.stream.Collectors;
+ import javax.annotation.Nullable;
++import me.friwi.replay.RecordablePlayer;
+ import net.minecraft.CrashReport;
+ import net.minecraft.CrashReportCategory;
+ import net.minecraft.ReportedException;
+@@ -1225,7 +1226,8 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         }
+     }
+ 
+-    protected void removeEntity(Entity entity) {
++    // Replays: Make public
++    public void removeEntity(Entity entity) {
+         org.spigotmc.AsyncCatcher.catchOp("entity untrack"); // Spigot
+         if (entity instanceof ServerPlayer) {
+             ServerPlayer entityplayer = (ServerPlayer) entity;
+@@ -1280,7 +1282,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         }
+         // Paper end - optimized tracker
+         List<ServerPlayer> list = Lists.newArrayList();
+-        List<ServerPlayer> list1 = this.level.players();
++        List<ServerPlayer> list1 = this.level.combinedPlayers(); // Replays: Use combined
+         ObjectIterator objectiterator = this.entityMap.values().iterator();
+         level.timings.tracker1.startTiming(); // Paper
+ 
+@@ -1536,6 +1538,11 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+                 double d2 = d0 * d0;
+                 boolean flag = d1 <= d2 && this.entity.broadcastToPlayer(player);
+ 
++                // Replays: Respect our view range
++                if (player instanceof RecordablePlayer rec) {
++                    flag = rec.isPositionRelevant(null, this.entity.getBlockX(), 0, this.entity.getBlockZ());
++                }
++
+                 // CraftBukkit start - respect vanish API
+                 if (!player.getBukkitEntity().canSee(this.entity.getBukkitEntity())) {
+                     flag = false;
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 18aac3da3c88f33b1a71a5920a8daa27e9723913..17db5ab99b1fcc6f9991f8c08c7bc1f34cb17c03 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -38,6 +38,7 @@ import java.util.stream.Collectors;
+ import java.util.stream.Stream;
+ import javax.annotation.Nonnull;
+ import javax.annotation.Nullable;
++import me.friwi.replay.RecordablePlayer;
+ import net.minecraft.CrashReport;
+ import net.minecraft.Util;
+ import net.minecraft.core.BlockPos;
+@@ -1143,7 +1144,6 @@ public class ServerLevel extends Level implements WorldGenLevel {
+         if (!this.players.isEmpty() && this.sleepStatus.update(this.players)) {
+             this.announceSleepStatus();
+         }
+-
+     }
+ 
+     @Override
+@@ -1749,6 +1749,8 @@ public class ServerLevel extends Level implements WorldGenLevel {
+             }
+         }
+ 
++        // Replays: Pipe
++        this.recordPacket(new ClientboundBlockDestructionPacket(entityId, pos, progress), pos.getX(), pos.getY(), pos.getZ());
+     }
+ 
+     @Override
+@@ -2818,4 +2820,31 @@ public class ServerLevel extends Level implements WorldGenLevel {
+         return this.server.getPlayerList().getPlayer(uuid);
+     }
+     // Paper end
++
++    // Replays: Util to fetch all players with recorders
++    public final List<RecordablePlayer> recorders = new ArrayList<>();
++    public List<ServerPlayer> combinedPlayers() {
++        ArrayList<ServerPlayer> ret = new ArrayList<>(this.players);
++        ret.addAll(this.recorders);
++        return ret;
++    }
++
++    public void recordPacket(Packet<?> packet, double x, double y, double z) {
++        for (RecordablePlayer player : this.recorders) {
++            int xi = Mth.floor(x);
++            int yi = Mth.floor(y);
++            int zi = Mth.floor(z);
++            if (player.isPositionRelevant(null, xi, yi, zi)){
++                player.connection.send(packet);
++            }
++        }
++    }
++
++    public void recordPacket(Packet<?> packet, int x, int y, int z) {
++        for (RecordablePlayer player : this.recorders) {
++            if (player.isPositionRelevant(null, x, y, z)){
++                player.connection.send(packet);
++            }
++        }
++    }
+ }
+diff --git a/src/main/java/net/minecraft/server/level/ServerPlayer.java b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+index 9d46536f80b5b3e6641fd377c02166a431edfd77..64da53613af660c1ea5261a0e716abdc07755148 100644
+--- a/src/main/java/net/minecraft/server/level/ServerPlayer.java
++++ b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+@@ -285,7 +285,8 @@ public class ServerPlayer extends Player {
+         return this.viewDistances.get();
+     }
+ 
+-    private void updateViewDistance(final java.util.function.Function<io.papermc.paper.chunk.system.RegionizedPlayerChunkLoader.ViewDistances, io.papermc.paper.chunk.system.RegionizedPlayerChunkLoader.ViewDistances> update) {
++    // Replays: Make public
++    public void updateViewDistance(final java.util.function.Function<io.papermc.paper.chunk.system.RegionizedPlayerChunkLoader.ViewDistances, io.papermc.paper.chunk.system.RegionizedPlayerChunkLoader.ViewDistances> update) {
+         for (io.papermc.paper.chunk.system.RegionizedPlayerChunkLoader.ViewDistances curr = this.viewDistances.get();;) {
+             if (this.viewDistances.compareAndSet(curr, update.apply(curr))) {
+                 return;
+diff --git a/src/main/java/net/minecraft/server/players/PlayerList.java b/src/main/java/net/minecraft/server/players/PlayerList.java
+index fff7ad7a45f310783ac96b44575ad3db13d537fa..f68d8f37690ab7232b75103ac6c5d9ffc17e3970 100644
+--- a/src/main/java/net/minecraft/server/players/PlayerList.java
++++ b/src/main/java/net/minecraft/server/players/PlayerList.java
+@@ -154,7 +154,7 @@ public abstract class PlayerList {
+     public final PlayerDataStorage playerIo;
+     private boolean doWhiteList;
+     private final LayeredRegistryAccess<RegistryLayer> registries;
+-    private final RegistryAccess.Frozen synchronizedRegistries;
++    public final RegistryAccess.Frozen synchronizedRegistries; // Replays: Make public
+     public int maxPlayers;
+     private int viewDistance;
+     private int simulationDistance;
+@@ -1200,6 +1200,8 @@ public abstract class PlayerList {
+             }
+         }
+ 
++        // Replays: Pipe
++        getServer().getLevel(worldKey).recordPacket(packet, x, y, z);
+     }
+ 
+     public void saveAll() {
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+index 2e08c33a2003b7add43ca352ebce493be1513840..90fd0de96ffb23d8c27457ef42e31562ea656d10 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+@@ -43,6 +43,8 @@ import java.util.logging.Level;
+ import java.util.logging.Logger;
+ import java.util.stream.Collectors;
+ import javax.imageio.ImageIO;
++import me.friwi.replay.RecordingCreator;
++import me.friwi.replay.RecordingCreatorImpl;
+ import net.minecraft.advancements.Advancement;
+ import net.minecraft.commands.CommandSourceStack;
+ import net.minecraft.commands.Commands;
+@@ -3077,4 +3079,10 @@ public final class CraftServer implements Server {
+     }
+ 
+     // Paper end
++
++    // Replays: Add own recording creator method
++    @Override
++    public RecordingCreator newRecordingCreator(File dir, Location spawnLocation, int lcx, int hcx, int lcz, int hcz) throws IOException {
++        return new RecordingCreatorImpl(dir, spawnLocation, lcx, hcx, lcz, hcz);
++    }
+ }

@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: MiniDigger <admin@minidigger.me>
+Date: Sat, 12 Jun 2021 16:40:34 +0200
+Subject: [PATCH] Build changes
+
+
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 57f2c414dbfe127c193002fbc8eeb22e94e9cb55..05912553b60cd2eaa6a40f292c1975e6afc52c5f 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -13,8 +13,12 @@ configurations.named(log4jPlugins.compileClasspathConfigurationName) {
+ val alsoShade: Configuration by configurations.creating
+ 
+ dependencies {
+-    implementation(project(":paper-api"))
+-    implementation(project(":paper-mojangapi"))
++    // PaperReplayGenerator start
++    implementation(project(":PaperReplayGenerator-api"))
++    implementation("io.papermc.paper:paper-mojangapi:1.19.3-R0.1-SNAPSHOT") {
++        exclude("io.papermc.paper", "paper-api")
++    }
++    // PaperReplayGenerator end
+     // Paper start
+     implementation("org.jline:jline-terminal-jansi:3.21.0")
+     implementation("net.minecrell:terminalconsoleappender:1.3.0")
+@@ -72,7 +76,7 @@ tasks.jar {
+         attributes(
+             "Main-Class" to "org.bukkit.craftbukkit.Main",
+             "Implementation-Title" to "CraftBukkit",
+-            "Implementation-Version" to "git-Paper-$implementationVersion",
++            "Implementation-Version" to "git-PaperReplayGenerator-$implementationVersion", // PaperReplayGenerator
+             "Implementation-Vendor" to date, // Paper
+             "Specification-Title" to "Bukkit",
+             "Specification-Version" to project.version,
+@@ -149,7 +153,7 @@ fun TaskContainer.registerRunTask(
+     name: String,
+     block: JavaExec.() -> Unit
+ ): TaskProvider<JavaExec> = register<JavaExec>(name) {
+-    group = "paper"
++    group = "paperweight" // PaperReplayGenerator
+     mainClass.set("org.bukkit.craftbukkit.Main")
+     standardInput = System.`in`
+     workingDir = rootProject.layout.projectDirectory
+diff --git a/src/main/java/net/minecraft/server/MinecraftServer.java b/src/main/java/net/minecraft/server/MinecraftServer.java
+index 3238cbcba567b1242c77e41f6b6f19a8d157fb4e..979aa74a44f6fefb3a0296290adcf677022d8ead 100644
+--- a/src/main/java/net/minecraft/server/MinecraftServer.java
++++ b/src/main/java/net/minecraft/server/MinecraftServer.java
+@@ -1693,7 +1693,7 @@ public abstract class MinecraftServer extends ReentrantBlockableEventLoop<TickTa
+ 
+     @DontObfuscate
+     public String getServerModName() {
+-        return "Paper"; // Paper - Paper > // Spigot - Spigot > // CraftBukkit - cb > vanilla!
++        return "PaperReplayGenerator"; // PaperReplayGenerator - PaperReplayGenerator > // Paper - Paper > // Spigot - Spigot > // CraftBukkit - cb > vanilla!
+     }
+ 
+     public SystemReport fillSystemReport(SystemReport details) {
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+index a05c1bc8874ef5e380544a6a344c848e37da49c4..2e08c33a2003b7add43ca352ebce493be1513840 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+@@ -264,7 +264,7 @@ import javax.annotation.Nullable; // Paper
+ import javax.annotation.Nonnull; // Paper
+ 
+ public final class CraftServer implements Server {
+-    private final String serverName = "Paper"; // Paper
++    private final String serverName = "Paper (with ReplayGenerator)"; // PaperReplayGenerator // Paper
+     private final String serverVersion;
+     private final String bukkitVersion = Versioning.getBukkitVersion();
+     private final Logger logger = Logger.getLogger("Minecraft");
+diff --git a/src/main/java/org/bukkit/craftbukkit/util/Versioning.java b/src/main/java/org/bukkit/craftbukkit/util/Versioning.java
+index 774556a62eb240da42e84db4502e2ed43495be17..a0f09cad134d5ab4ddb84d82dbce5188542d8da5 100644
+--- a/src/main/java/org/bukkit/craftbukkit/util/Versioning.java
++++ b/src/main/java/org/bukkit/craftbukkit/util/Versioning.java
+@@ -11,7 +11,7 @@ public final class Versioning {
+     public static String getBukkitVersion() {
+         String result = "Unknown-Version";
+ 
+-        InputStream stream = Bukkit.class.getClassLoader().getResourceAsStream("META-INF/maven/io.papermc.paper/paper-api/pom.properties");
++        InputStream stream = Bukkit.class.getClassLoader().getResourceAsStream("META-INF/maven/me.friwi/PaperReplayGenerator-api/pom.properties"); // PaperReplayGenerator
+         Properties properties = new Properties();
+ 
+         if (stream != null) {
