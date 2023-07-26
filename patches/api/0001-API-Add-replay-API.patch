@@ -6,10 +6,10 @@ Subject: [PATCH] API: Add replay API
 
 diff --git a/src/main/java/me/friwi/replay/RecordingCreator.java b/src/main/java/me/friwi/replay/RecordingCreator.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..f5224c13ca23ac4ec0d3a002913f911bf4a8159d
+index 0000000000000000000000000000000000000000..fb3642934874c963c2fe1345466bb5910eac237f
 --- /dev/null
 +++ b/src/main/java/me/friwi/replay/RecordingCreator.java
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,124 @@
 +/*
 +Paper ReplayMod Recording Creator
 +Copyright (C) 2023 FriwiDev
@@ -29,6 +29,12 @@ index 0000000000000000000000000000000000000000..f5224c13ca23ac4ec0d3a002913f911b
 + */
 +
 +package me.friwi.replay;
++
++import net.kyori.adventure.text.Component;
++import org.bukkit.Color;
++import org.bukkit.Location;
++import org.bukkit.World;
++import org.jetbrains.annotations.NotNull;
 +
 +import java.awt.image.BufferedImage;
 +import java.io.File;
@@ -36,10 +42,6 @@ index 0000000000000000000000000000000000000000..f5224c13ca23ac4ec0d3a002913f911b
 +import java.util.List;
 +import java.util.UUID;
 +import java.util.function.Consumer;
-+import net.kyori.adventure.text.Component;
-+import org.bukkit.Color;
-+import org.bukkit.Location;
-+import org.bukkit.World;
 +
 +public interface RecordingCreator {
 +    /**
@@ -47,91 +49,97 @@ index 0000000000000000000000000000000000000000..f5224c13ca23ac4ec0d3a002913f911b
 +     */
 +    void beginRecording();
 +
-+    void endRecording(Consumer<File> onComplete);
++    void endRecording(@NotNull Consumer<File> onComplete);
 +
++    @NotNull
 +    BufferedImage getThumbnail();
 +
 +    /**
 +     * Settings for the whole file
 +     */
-+    void setThumbnail(BufferedImage image);
++    void setThumbnail(@NotNull BufferedImage image);
 +
++    @NotNull
 +    String getCustomServerName();
 +
-+    void setCustomServerName(String customServerName);
++    void setCustomServerName(@NotNull String customServerName);
 +
++    @NotNull
 +    String getServerIP();
 +
-+    void setServerIP(String serverIP);
++    void setServerIP(@NotNull String serverIP);
 +
-+    void setTablistHeaderFooter(String header, String footer);
++    void setTablistHeaderFooter(@NotNull String header, @NotNull String footer);
 +
-+    void setTablistHeaderFooter(Component header, Component footer);
++    void setTablistHeaderFooter(@NotNull Component header, @NotNull Component footer);
 +
-+    void setPlayerListName(UUID uuid, String listName);
++    void setPlayerListName(@NotNull UUID uuid, @NotNull String listName);
 +
-+    void createObjective(String objectiveName, String text);
++    void createObjective(@NotNull String objectiveName, @NotNull String text);
 +
-+    void createObjective(String objectiveName, String text, boolean displayAsHeart);
++    void createObjective(@NotNull String objectiveName, @NotNull String text, boolean displayAsHeart);
 +
-+    void displayObjectiveList(String objectiveName);
++    void displayObjectiveList(@NotNull String objectiveName);
 +
-+    void displayObjectiveSidebar(String objectiveName);
++    void displayObjectiveSidebar(@NotNull String objectiveName);
 +
-+    void displayObjectiveBelowName(String objectiveName);
++    void displayObjectiveBelowName(@NotNull String objectiveName);
 +
-+    void createTeam(String team, Color color, String displayName, String prefix, String suffix, Collection<String> players);
++    void createTeam(@NotNull String team, @NotNull Color color, @NotNull String displayName, @NotNull String prefix, @NotNull String suffix, @NotNull Collection<String> players);
 +
++    @NotNull
 +    Collection<UUID> getOccuringPlayers();
 +
++    @NotNull
 +    World getWorld();
 +
-+    boolean addResourcePack(File file);
++    boolean addResourcePack(@NotNull File file);
 +
-+    boolean removeResourcePack(File file);
++    boolean removeResourcePack(@NotNull File file);
 +
++    @NotNull
 +    List<File> getAllResourcePacks();
 +
 +    /**
 +     * Time dependent settings
 +     */
-+    void appendPacket(Object packet);
++    void appendPacket(@NotNull Object packet);
 +
-+    void appendPacketWithLocation(Object packet, Location location);
++    void appendPacketWithLocation(@NotNull Object packet, @NotNull Location location);
 +
-+    void appendPacketWithLocation(Object packet, int x, int y, int z);
++    void appendPacketWithLocation(@NotNull Object packet, int x, int y, int z);
 +
-+    void appendPacketWithChunkLocation(Object packet, int cx, int cz);
++    void appendPacketWithChunkLocation(@NotNull Object packet, int cx, int cz);
 +
-+    void addChat(String message);
++    void addChat(@NotNull String message);
 +
-+    void addChat(Component component);
++    void addChat(@NotNull Component component);
 +
-+    void addOrUpdateScore(String score, String objectiveName, int value);
++    void addOrUpdateScore(@NotNull String score, @NotNull String objectiveName, int value);
 +
-+    void removeScore(String score);
++    void removeScore(@NotNull String score);
 +
-+    void removeTeam(String team);
++    void removeTeam(@NotNull String team);
 +
-+    void updateTeamInfo(String team, Color color, String displayName, String prefix, String suffix);
++    void updateTeamInfo(@NotNull String team, @NotNull Color color, @NotNull String displayName, @NotNull String prefix, @NotNull String suffix);
 +
-+    void addPlayersToTeam(String team, Collection<String> players);
++    void addPlayersToTeam(@NotNull String team, @NotNull Collection<String> players);
 +
-+    void removePlayersFromTeam(String team, Collection<String> players);
++    void removePlayersFromTeam(@NotNull String team, @NotNull Collection<String> players);
 +
 +    /**
 +     * Utils
 +     */
-+    boolean isLocationRelevant(Location loc);
++    boolean isLocationRelevant(@NotNull Location loc);
 +
 +    boolean isActive();
 +}
 diff --git a/src/main/java/me/friwi/replay/RecordingFactory.java b/src/main/java/me/friwi/replay/RecordingFactory.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..44db5c95c0b19171ce3c50c0de3e665d7693830e
+index 0000000000000000000000000000000000000000..dc7b492b7871df7f8ff4288cf2ac2b55e66c5fb6
 --- /dev/null
 +++ b/src/main/java/me/friwi/replay/RecordingFactory.java
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,30 @@
 +/*
 +Paper ReplayMod Recording Creator
 +Copyright (C) 2023 FriwiDev
@@ -152,12 +160,15 @@ index 0000000000000000000000000000000000000000..44db5c95c0b19171ce3c50c0de3e665d
 +
 +package me.friwi.replay;
 +
++import org.bukkit.Location;
++import org.jetbrains.annotations.NotNull;
++
 +import java.io.File;
 +import java.io.IOException;
-+import org.bukkit.Location;
 +
 +public interface RecordingFactory {
-+    RecordingCreator newRecordingCreator(File dir, Location spawnLocation, int lcx, int hcx, int lcz, int hcz) throws IOException;
++    @NotNull
++    RecordingCreator newRecordingCreator(@NotNull File dir, @NotNull Location spawnLocation, int lcx, int hcx, int lcz, int hcz) throws IOException;
 +}
 diff --git a/src/main/java/org/bukkit/Server.java b/src/main/java/org/bukkit/Server.java
 index 6b72eccdcb6f75534a4267a1dd0a4cc2f39e917b..02d814f9080806277177fc55735072bce953d7cc 100644

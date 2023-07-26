@@ -145,10 +145,10 @@ index 0000000000000000000000000000000000000000..0aa0bc2f858a28bd6c2d9a718f6a121c
 +}
 diff --git a/src/main/java/me/friwi/replay/Recording.java b/src/main/java/me/friwi/replay/Recording.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733ae1338f7
+index 0000000000000000000000000000000000000000..d6c1b3ab2b795692c0e0b58f13c008f55aaea33c
 --- /dev/null
 +++ b/src/main/java/me/friwi/replay/Recording.java
-@@ -0,0 +1,699 @@
+@@ -0,0 +1,679 @@
 +/*
 +Paper ReplayMod Recording Creator
 +Copyright (C) 2023 FriwiDev
@@ -174,29 +174,8 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +import com.google.gson.JsonObject;
 +import com.mojang.authlib.GameProfile;
 +import io.netty.buffer.Unpooled;
-+import java.awt.image.BufferedImage;
-+import java.io.File;
-+import java.io.FileInputStream;
-+import java.io.FileOutputStream;
-+import java.io.IOException;
-+import java.io.OutputStream;
-+import java.nio.ByteBuffer;
-+import java.nio.charset.StandardCharsets;
-+import java.util.Collection;
-+import java.util.HashSet;
-+import java.util.LinkedList;
-+import java.util.List;
-+import java.util.Optional;
-+import java.util.Set;
-+import java.util.UUID;
-+import java.util.concurrent.ConcurrentLinkedQueue;
-+import java.util.function.Consumer;
-+import java.util.logging.Logger;
-+import java.util.zip.CRC32;
-+import java.util.zip.ZipEntry;
-+import java.util.zip.ZipOutputStream;
-+import javax.annotation.Nullable;
-+import javax.imageio.ImageIO;
++import io.papermc.paper.adventure.PaperAdventure;
++import net.kyori.adventure.text.Component;
 +import net.minecraft.ChatFormatting;
 +import net.minecraft.Optionull;
 +import net.minecraft.SharedConstants;
@@ -204,26 +183,10 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +import net.minecraft.network.ConnectionProtocol;
 +import net.minecraft.network.FriendlyByteBuf;
 +import net.minecraft.network.PacketSendListener;
-+import net.minecraft.network.chat.Component;
 +import net.minecraft.network.chat.RemoteChatSession;
 +import net.minecraft.network.protocol.Packet;
 +import net.minecraft.network.protocol.PacketFlow;
-+import net.minecraft.network.protocol.game.ClientboundAddPlayerPacket;
-+import net.minecraft.network.protocol.game.ClientboundBundlePacket;
-+import net.minecraft.network.protocol.game.ClientboundChangeDifficultyPacket;
-+import net.minecraft.network.protocol.game.ClientboundCustomPayloadPacket;
-+import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
-+import net.minecraft.network.protocol.game.ClientboundLoginPacket;
-+import net.minecraft.network.protocol.game.ClientboundPlayerAbilitiesPacket;
-+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
-+import net.minecraft.network.protocol.game.ClientboundSetCarriedItemPacket;
-+import net.minecraft.network.protocol.game.ClientboundSetDisplayObjectivePacket;
-+import net.minecraft.network.protocol.game.ClientboundSetObjectivePacket;
-+import net.minecraft.network.protocol.game.ClientboundSetPlayerTeamPacket;
-+import net.minecraft.network.protocol.game.ClientboundSetScorePacket;
-+import net.minecraft.network.protocol.game.ClientboundSystemChatPacket;
-+import net.minecraft.network.protocol.game.ClientboundTabListPacket;
-+import net.minecraft.network.protocol.game.ClientboundUpdateEnabledFeaturesPacket;
++import net.minecraft.network.protocol.game.*;
 +import net.minecraft.network.protocol.login.ClientboundGameProfilePacket;
 +import net.minecraft.server.MinecraftServer;
 +import net.minecraft.server.ServerScoreboard;
@@ -241,6 +204,20 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +import org.bukkit.Location;
 +import org.bukkit.craftbukkit.CraftWorld;
 +import org.jetbrains.annotations.NotNull;
++
++import javax.annotation.Nullable;
++import javax.imageio.ImageIO;
++import java.awt.image.BufferedImage;
++import java.io.*;
++import java.nio.ByteBuffer;
++import java.nio.charset.StandardCharsets;
++import java.util.*;
++import java.util.concurrent.ConcurrentLinkedQueue;
++import java.util.function.Consumer;
++import java.util.logging.Logger;
++import java.util.zip.CRC32;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
 +
 +public class Recording {
 +    private static final byte[] THUMB_MAGIC_NUMBERS = {0, 1, 1, 2, 3, 5, 8};
@@ -710,7 +687,7 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +    }
 +
 +    public void addChat(String message) {
-+        appendPacket(new ClientboundSystemChatPacket(Component.literal(message), false), 2);
++        appendPacket(new ClientboundSystemChatPacket(Component.text(message), false), 2);
 +    }
 +
 +    public void addChat(Component component) {
@@ -722,11 +699,14 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +    }
 +
 +    public void setTablistHeaderFooter(String header, String footer) {
-+        this.setTablistHeaderFooter(Component.literal(header), Component.literal(footer));
++        this.setTablistHeaderFooter(Component.text(header), Component.text(footer));
 +    }
 +
 +    public void setTablistHeaderFooter(Component header, Component footer) {
-+        appendPacket(new ClientboundTabListPacket(header, footer), 1);
++        appendPacket(new ClientboundTabListPacket(
++            PaperAdventure.asVanilla(header),
++            PaperAdventure.asVanilla(footer)
++        ), 1);
 +    }
 +
 +    public void setPlayerListName(UUID uuid, String listName) {
@@ -741,7 +721,7 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +                        true,
 +                        player.latency,
 +                        player.gameMode.getGameModeForPlayer(),
-+                        Component.literal(listName),
++                        net.minecraft.network.chat.Component.literal(listName),
 +                        Optionull.map(player.getChatSession(), RemoteChatSession::asData)
 +                    )
 +                ), 1);
@@ -757,7 +737,7 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +            MinecraftServer.getServer().getScoreboard(),
 +            objectiveName,
 +            ObjectiveCriteria.DUMMY,
-+            Component.literal(text),
++            net.minecraft.network.chat.Component.literal(text),
 +            displayAsHeart ? ObjectiveCriteria.RenderType.HEARTS : ObjectiveCriteria.RenderType.INTEGER
 +        );
 +        appendPacket(new ClientboundSetObjectivePacket(objective, ClientboundSetObjectivePacket.METHOD_ADD), 1);
@@ -780,7 +760,7 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +            MinecraftServer.getServer().getScoreboard(),
 +            objectiveName,
 +            ObjectiveCriteria.DUMMY,
-+            Component.literal(objectiveName),
++            net.minecraft.network.chat.Component.literal(objectiveName),
 +            ObjectiveCriteria.RenderType.INTEGER
 +        );
 +        appendPacket(new ClientboundSetDisplayObjectivePacket(slot, objective), 1);
@@ -796,7 +776,7 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +
 +    public void createTeam(String team, ChatFormatting color, String displayName, String prefix, String suffix, Collection<String> players) {
 +        appendPacket(new ClientboundSetPlayerTeamPacket(team, ClientboundSetPlayerTeamPacket.METHOD_ADD,
-+            Optional.of(new ClientboundSetPlayerTeamPacket.Parameters(Component.literal(displayName), Component.literal(prefix), Component.literal(suffix),
++            Optional.of(new ClientboundSetPlayerTeamPacket.Parameters(net.minecraft.network.chat.Component.literal(displayName), net.minecraft.network.chat.Component.literal(prefix), net.minecraft.network.chat.Component.literal(suffix),
 +                Team.Visibility.ALWAYS.name, Team.CollisionRule.NEVER.name, color, 0)), players), 1);
 +    }
 +
@@ -807,7 +787,7 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +
 +    public void updateTeamInfo(String team, ChatFormatting color, String displayName, String prefix, String suffix) {
 +        appendPacket(new ClientboundSetPlayerTeamPacket(team, ClientboundSetPlayerTeamPacket.METHOD_CHANGE,
-+            Optional.of(new ClientboundSetPlayerTeamPacket.Parameters(Component.literal(displayName), Component.literal(prefix), Component.literal(suffix),
++            Optional.of(new ClientboundSetPlayerTeamPacket.Parameters(net.minecraft.network.chat.Component.literal(displayName), net.minecraft.network.chat.Component.literal(prefix), net.minecraft.network.chat.Component.literal(suffix),
 +                Team.Visibility.ALWAYS.name, Team.CollisionRule.NEVER.name, color, 0)), List.of()), 2);
 +    }
 +
@@ -850,10 +830,10 @@ index 0000000000000000000000000000000000000000..53c5fc82b10dfc1f68cb964b40bfe733
 +}
 diff --git a/src/main/java/me/friwi/replay/RecordingCreatorImpl.java b/src/main/java/me/friwi/replay/RecordingCreatorImpl.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..aa7fd8a2e150cf95901b40e9338948c841ab47b5
+index 0000000000000000000000000000000000000000..df22801aaca420f222973d959653d2295a03dc45
 --- /dev/null
 +++ b/src/main/java/me/friwi/replay/RecordingCreatorImpl.java
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,229 @@
 +/*
 +Paper ReplayMod Recording Creator
 +Copyright (C) 2023 FriwiDev
@@ -874,13 +854,6 @@ index 0000000000000000000000000000000000000000..aa7fd8a2e150cf95901b40e9338948c8
 +
 +package me.friwi.replay;
 +
-+import java.awt.image.BufferedImage;
-+import java.io.File;
-+import java.io.IOException;
-+import java.util.Collection;
-+import java.util.List;
-+import java.util.UUID;
-+import java.util.function.Consumer;
 +import net.kyori.adventure.text.Component;
 +import net.minecraft.ChatFormatting;
 +import net.minecraft.network.protocol.Packet;
@@ -888,6 +861,14 @@ index 0000000000000000000000000000000000000000..aa7fd8a2e150cf95901b40e9338948c8
 +import org.bukkit.Location;
 +import org.bukkit.World;
 +import org.bukkit.craftbukkit.CraftWorld;
++
++import java.awt.image.BufferedImage;
++import java.io.File;
++import java.io.IOException;
++import java.util.Collection;
++import java.util.List;
++import java.util.UUID;
++import java.util.function.Consumer;
 +
 +public class RecordingCreatorImpl implements RecordingCreator {
 +    private final Recording recording;
@@ -943,10 +924,7 @@ index 0000000000000000000000000000000000000000..aa7fd8a2e150cf95901b40e9338948c8
 +
 +    @Override
 +    public void setTablistHeaderFooter(Component header, Component footer) {
-+        this.recording.setTablistHeaderFooter(
-+            io.papermc.paper.adventure.PaperAdventure.asVanilla(header),
-+            io.papermc.paper.adventure.PaperAdventure.asVanilla(footer)
-+        );
++        this.recording.setTablistHeaderFooter(header, footer);
 +    }
 +
 +    @Override
@@ -1042,7 +1020,7 @@ index 0000000000000000000000000000000000000000..aa7fd8a2e150cf95901b40e9338948c8
 +
 +    @Override
 +    public void addChat(Component component) {
-+        this.recording.addChat(io.papermc.paper.adventure.PaperAdventure.asVanilla(component));
++        this.recording.addChat(component);
 +    }
 +
 +    @Override
